@@ -14,15 +14,19 @@ export async function POST(req: NextRequest) {
   try {
     const transcriptData = await fetchTranscript(url);
 
-    const existing = await dbGet('SELECT * FROM youtube_videos WHERE video_id = ?', [transcriptData.videoId]);
+    const row = await dbGet('SELECT * FROM youtube_videos WHERE video_id = ?', [transcriptData.videoId]) as Record<string, unknown> | undefined;
 
-    if (existing) {
-      return NextResponse.json({
-        ...existing,
-        transcript: transcriptData.transcript,
-        title: transcriptData.title,
-        thumbnail_url: transcriptData.thumbnailUrl,
-      });
+    const normalized = {
+      id: row?.id || '',
+      url,
+      videoId: transcriptData.videoId,
+      title: transcriptData.title,
+      transcript: transcriptData.transcript,
+      thumbnailUrl: transcriptData.thumbnailUrl,
+    };
+
+    if (row) {
+      return NextResponse.json(normalized);
     }
 
     const id = uuid();
@@ -32,8 +36,7 @@ export async function POST(req: NextRequest) {
       [id, url, transcriptData.videoId, transcriptData.title, transcriptData.transcript, transcriptData.thumbnailUrl]
     );
 
-    const video = await dbGet('SELECT * FROM youtube_videos WHERE id = ?', [id]);
-    return NextResponse.json(video, { status: 201 });
+    return NextResponse.json({ ...normalized, id }, { status: 201 });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to extract transcript';
     return NextResponse.json({ error: message }, { status: 500 });

@@ -1,4 +1,5 @@
 import { Innertube } from 'youtubei.js';
+import { YoutubeTranscript } from 'youtube-transcript';
 
 export interface VideoInfo {
   videoId: string;
@@ -41,42 +42,42 @@ export async function fetchTranscript(url: string): Promise<VideoInfo> {
     throw new Error('Invalid YouTube URL. Could not extract video ID.');
   }
 
-  const yt = await getYT();
-  const info = await yt.getInfo(videoId);
-
-  const title = info.primary_info?.title?.text || info.basic_info?.title || `YouTube Video ${videoId}`;
-
-  let transcript = '';
+  let title = '';
   try {
-    const transcriptInfo = await info.getTranscript();
-    const body = transcriptInfo.transcript?.content?.body;
-    if (!body || !body.initial_segments || body.initial_segments.length === 0) {
-      throw new Error('No transcript available');
-    }
-    transcript = body.initial_segments
-      .filter((s) => s.type === 'TranscriptSegment')
-      .map((s) => s.snippet.text)
+    const yt = await getYT();
+    const info = await yt.getBasicInfo(videoId);
+    title = info.basic_info?.title || '';
+  } catch {
+    // title fallback
+  }
+
+  let transcriptText = '';
+  let transcriptError = '';
+
+  try {
+    const segments = await YoutubeTranscript.fetchTranscript(videoId);
+    transcriptText = segments
+      .map((s) => s.text)
       .join(' ')
       .replace(/\s+/g, ' ')
       .trim();
-  } catch {
-    throw new Error(
-      `Could not extract transcript for this video. The video may not have captions/subtitles available. ` +
-      `Try a video that has CC (closed captions) enabled, or one from a channel known to provide subtitles.`
-    );
+  } catch (e) {
+    transcriptError = e instanceof Error ? e.message : 'Unknown error';
   }
 
-  if (!transcript) {
+  if (!transcriptText) {
     throw new Error(
-      'Transcript is empty. This video may not have any spoken content or captions are unavailable.'
+      transcriptError.includes('disabled')
+        ? 'This video does not have captions/subtitles available. Try a different video that has CC (closed captions) enabled.'
+        : `Could not extract transcript: ${transcriptError || 'No captions available'}`
     );
   }
 
   return {
     videoId,
     url,
-    title,
-    transcript,
+    title: title || `YouTube Video ${videoId}`,
+    transcript: transcriptText,
     thumbnailUrl: getThumbnailUrl(videoId),
   };
 }
