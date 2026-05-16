@@ -1,4 +1,4 @@
-import { YoutubeTranscript } from 'youtube-transcript';
+import { Innertube } from 'youtubei.js';
 
 export interface VideoInfo {
   videoId: string;
@@ -6,6 +6,15 @@ export interface VideoInfo {
   title: string;
   transcript: string;
   thumbnailUrl: string;
+}
+
+let ytInstance: Innertube | null = null;
+
+async function getYT(): Promise<Innertube> {
+  if (!ytInstance) {
+    ytInstance = await Innertube.create({ lang: 'en', location: 'US' });
+  }
+  return ytInstance;
 }
 
 export function extractVideoId(url: string): string | null {
@@ -32,14 +41,36 @@ export async function fetchTranscript(url: string): Promise<VideoInfo> {
     throw new Error('Invalid YouTube URL. Could not extract video ID.');
   }
 
-  const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
-  const transcript = transcriptItems
-    .map((item) => item.text)
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const yt = await getYT();
+  const info = await yt.getInfo(videoId);
 
-  const title = `YouTube Video ${videoId}`;
+  const title = info.primary_info?.title?.text || info.basic_info?.title || `YouTube Video ${videoId}`;
+
+  let transcript = '';
+  try {
+    const transcriptInfo = await info.getTranscript();
+    const body = transcriptInfo.transcript?.content?.body;
+    if (!body || !body.initial_segments || body.initial_segments.length === 0) {
+      throw new Error('No transcript available');
+    }
+    transcript = body.initial_segments
+      .filter((s) => s.type === 'TranscriptSegment')
+      .map((s) => s.snippet.text)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  } catch {
+    throw new Error(
+      `Could not extract transcript for this video. The video may not have captions/subtitles available. ` +
+      `Try a video that has CC (closed captions) enabled, or one from a channel known to provide subtitles.`
+    );
+  }
+
+  if (!transcript) {
+    throw new Error(
+      'Transcript is empty. This video may not have any spoken content or captions are unavailable.'
+    );
+  }
 
   return {
     videoId,
