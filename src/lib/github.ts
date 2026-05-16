@@ -89,51 +89,35 @@ export async function publishToGitHub(
   }
 }
 
-export async function triggerVercelDeploy(
-  repoUrl: string,
-  token: string
-): Promise<{ success: boolean; message: string }> {
-  try {
-    const repoPath = repoUrl
-      .replace('https://github.com/', '')
-      .replace('github.com/', '')
-      .replace(/\.git$/, '')
-      .replace(/\/$/, '');
+export async function triggerVercelDeploy(): Promise<{ success: boolean; message: string }> {
+  const deployHook = process.env.VERCEL_DEPLOY_HOOK;
 
-    const res = await fetch(
-      `https://api.vercel.com/v1/integrations/deploy`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: repoPath,
-          gitSource: {
-            type: 'github',
-            repo: repoPath,
-          },
-        }),
-      }
-    );
+  if (!deployHook) {
+    return {
+      success: true,
+      message: 'GitHub push successful. If Vercel auto-deploy is configured, deployment will start automatically.',
+    };
+  }
+
+  try {
+    const res = await fetch(deployHook, { method: 'POST' });
 
     if (!res.ok) {
       return {
         success: false,
-        message: `Vercel deploy trigger: ${res.status}`,
+        message: `Vercel deploy hook failed: ${res.status}`,
       };
     }
 
     return {
       success: true,
-      message: 'Vercel deployment triggered. The site will update automatically.',
+      message: 'Vercel deployment triggered via Deploy Hook.',
     };
   } catch {
     return {
       success: true,
       message:
-        'GitHub push successful. If Vercel auto-deploy is configured, deployment will start automatically.',
+        'GitHub push successful. Vercel Deploy Hook call failed, but auto-deploy may still trigger from GitHub push.',
     };
   }
 }

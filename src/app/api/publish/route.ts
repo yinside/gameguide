@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { publishToGitHub, triggerVercelDeploy } from '@/lib/github';
-import { getDb } from '@/lib/db';
+import { dbGet, dbAll } from '@/lib/db';
 import { v4 as uuid } from 'uuid';
 
 export async function POST(req: NextRequest) {
@@ -14,14 +14,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const db = getDb();
-
-    const article = db.prepare('SELECT * FROM articles WHERE id = ?').get(articleId) as Record<string, unknown> | undefined;
+    const article = await dbGet('SELECT * FROM articles WHERE id = ?', [articleId]) as Record<string, unknown> | undefined;
     if (!article) {
       return NextResponse.json({ error: 'Article not found' }, { status: 404 });
     }
 
-    const site = db.prepare('SELECT * FROM sites WHERE id = ?').get(siteId) as Record<string, unknown> | undefined;
+    const site = await dbGet('SELECT * FROM sites WHERE id = ?', [siteId]) as Record<string, unknown> | undefined;
     if (!site) {
       return NextResponse.json({ error: 'Site not found' }, { status: 404 });
     }
@@ -48,17 +46,15 @@ export async function POST(req: NextRequest) {
 
     if (result.success) {
       const logId = uuid();
-      db.prepare(`
-        INSERT INTO publish_logs (id, article_id, site_id, status, commit_sha, message)
-        VALUES (?, ?, ?, 'success', ?, ?)
-      `).run(logId, articleId, siteId, result.commitSha || '', 'Published successfully');
+      await dbAll(
+        `INSERT INTO publish_logs (id, article_id, site_id, status, commit_sha, message)
+         VALUES (?, ?, ?, 'success', ?, ?)`,
+        [logId, articleId, siteId, result.commitSha || '', 'Published successfully']
+      );
 
-      db.prepare("UPDATE articles SET status = 'published', updated_at = datetime('now') WHERE id = ?").run(articleId);
+      await dbAll("UPDATE articles SET status = 'published', updated_at = datetime('now') WHERE id = ?", [articleId]);
 
-      const vercelToken = process.env.VERCEL_TOKEN || '';
-      if (vercelToken) {
-        await triggerVercelDeploy(site.repo_url as string, vercelToken);
-      }
+      await triggerVercelDeploy();
 
       return NextResponse.json({
         success: true,
@@ -68,10 +64,11 @@ export async function POST(req: NextRequest) {
     }
 
     const logId = uuid();
-    db.prepare(`
-      INSERT INTO publish_logs (id, article_id, site_id, status, message)
-      VALUES (?, ?, ?, 'failed', ?)
-    `).run(logId, articleId, siteId, result.message);
+    await dbAll(
+      `INSERT INTO publish_logs (id, article_id, site_id, status, message)
+       VALUES (?, ?, ?, 'failed', ?)`,
+      [logId, articleId, siteId, result.message]
+    );
 
     return NextResponse.json({ success: false, message: result.message }, { status: 500 });
   } catch (error) {

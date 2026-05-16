@@ -1,75 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { dbGet, dbAll } from '@/lib/db';
 import { generateArticle } from '@/lib/openai';
 import { generateFrontmatter, assembleMarkdownFile, generateSlug } from '@/lib/markdown';
-import { getDb } from '@/lib/db';
-import { v4 as uuid } from 'uuid';
 
 export async function POST(req: NextRequest) {
+  const body = await req.json();
+  const { articleId } = body;
+
+  if (!articleId) {
+    return NextResponse.json({ error: 'articleId is required' }, { status: 400 });
+  }
+
+  const article = await dbGet(
+    'SELECT a.*, s.name as site_name, s.game_category FROM articles a LEFT JOIN sites s ON a.site_id = s.id WHERE a.id = ?',
+    [articleId]
+  );
+
+  if (!article) {
+    return NextResponse.json({ error: 'Article not found' }, { status: 404 });
+  }
+
+  const transcript = String(article.transcript || '');
+  if (!transcript) {
+    return NextResponse.json({ error: 'No transcript found. Import a YouTube video first.' }, { status: 400 });
+  }
+
   try {
-    const { transcript, videoTitle, gameCategory, siteName, siteId, category, youtubeUrl, videoId, thumbnailUrl } =
-      await req.json();
-
-    if (!transcript || !siteId) {
-      return NextResponse.json(
-        { error: 'Transcript and siteId are required' },
-        { status: 400 }
-      );
-    }
-
-    const db = getDb();
-    const site = db.prepare('SELECT * FROM sites WHERE id = ?').get(siteId) as Record<string, unknown> | undefined;
-    if (!site) {
-      return NextResponse.json({ error: 'Site not found' }, { status: 404 });
-    }
-
-    const generated = await generateArticle({
+    const result = await generateArticle({
       transcript,
-      videoTitle: videoTitle || 'Gaming Guide',
-      gameCategory: gameCategory || (site.game_category as string) || 'general',
-      siteName: siteName || (site.name as string),
+      videoTitle: String(article.title || 'Game Guide'),
+      gameCategory: String(article.game_category || 'general'),
+      siteName: String(article.site_name || 'STS2BestBuilds'),
     });
 
-    const slug = generated.slug || generateSlug(generated.seoTitle || videoTitle || 'guide');
+    const displayTitle = result.seoTitle.replace(/\s*\|\s*STS2BestBuilds\s*$/i, '').trim() || String(article.title || 'Guide');
+    const slug = result.slug || generateSlug(displayTitle);
 
     const frontmatter = generateFrontmatter({
-      title: generated.seoTitle || videoTitle || 'Gaming Guide',
-      description: generated.seoDescription || '',
+      title: displayTitle,
+      description: result.seoDescription,
       slug,
-      tags: generated.tags,
-      category: category || 'general',
-      thumbnailUrl,
+      category: String(article.category || 'general'),
+      tags: result.tags || [],
+      date: new Date().toISOString().split('T')[0],
     });
 
-    const fullMarkdown = assembleMarkdownFile(frontmatter, generated.markdown);
+    const fullContent = assembleMarkdownFile(frontmatter, result.markdown);
 
-    const articleId = uuid();
-    db.prepare(`
-      INSERT INTO articles (id, site_id, title, slug, description, tags, category, content, frontmatter, youtube_url, video_id, thumbnail_url, seo_title, seo_description, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai_generated')
-    `).run(
-      articleId,
-      siteId,
-      generated.seoTitle || videoTitle || 'Gaming Guide',
-      slug,
-      generated.seoDescription || '',
-      JSON.stringify(generated.tags),
-      category || 'general',
-      fullMarkdown,
-      frontmatter,
-      youtubeUrl || '',
-      videoId || '',
-      thumbnailUrl || '',
-      generated.seoTitle || '',
-      generated.seoDescription || ''
+    await dbAll(
+      `UPDATE articles SET
+        title = ?, slug = ?, description = ?, tags = ?, content = ?,
+        seo_title = ?, seo_description = ?, status = 'ai_generated', updated_at = datetime('now')
+      WHERE id = ?`,
+      [displayTitle, slug, result.seoDescription, JSON.stringify(result.tags || []),
+       fullContent, result.seoTitle, result.seoDescription, articleId]
     );
 
-    const article = db.prepare('SELECT * FROM articles WHERE id = ?').get(articleId);
-
-    return NextResponse.json(article, { status: 201 });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to generate article' },
-      { status: 500 }
+    const updated = await dbGet(
+      'SELECT a.*, s.name as site_name FROM articles a LEFT JOIN sites s ON a.site_id = s.id WHERE a.id = ?',
+      [articleId]
     );
+    return NextResponse.json(updated);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'AI generation failed';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

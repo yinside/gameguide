@@ -198,7 +198,7 @@ export default function YouTubePage() {
                       </SelectTrigger>
                       <SelectContent className="bg-gaming-card border-gaming-border">
                         {sites.map((site) => (
-                          <SelectItem key={site.id} value={site.id}>
+                          <SelectItem key={site.id} value={site.id} label={`${site.name} (${site.domain})`}>
                             {site.name} ({site.domain})
                           </SelectItem>
                         ))}

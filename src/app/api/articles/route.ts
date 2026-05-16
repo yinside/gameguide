@@ -1,31 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { dbGet, dbAll } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
-  const db = getDb();
-  const url = new URL(req.url);
-  const siteId = url.searchParams.get('siteId');
-  const status = url.searchParams.get('status');
+  const { searchParams } = new URL(req.url);
+  const siteId = searchParams.get('siteId');
+  const status = searchParams.get('status');
 
-  let query = 'SELECT * FROM articles';
-  const conditions: string[] = [];
-  const params: string[] = [];
+  let sql = 'SELECT a.*, s.name as site_name FROM articles a LEFT JOIN sites s ON a.site_id = s.id WHERE 1=1';
+  const params: unknown[] = [];
 
   if (siteId) {
-    conditions.push('site_id = ?');
+    sql += ' AND a.site_id = ?';
     params.push(siteId);
   }
   if (status) {
-    conditions.push('status = ?');
+    sql += ' AND a.status = ?';
     params.push(status);
   }
 
-  if (conditions.length > 0) {
-    query += ' WHERE ' + conditions.join(' AND ');
-  }
-
-  query += ' ORDER BY created_at DESC';
-
-  const articles = db.prepare(query).all(...params);
+  sql += ' ORDER BY a.updated_at DESC';
+  const articles = await dbAll(sql, params);
   return NextResponse.json(articles);
+}
+
+export async function POST(req: NextRequest) {
+  const body = await req.json();
+  const { v4: uuid } = await import('uuid');
+
+  const id = uuid();
+  await dbAll(
+    `INSERT INTO articles (id, site_id, title, slug, description, tags, category, content, frontmatter, youtube_url, video_id, thumbnail_url, seo_title, seo_description, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, body.site_id, body.title, body.slug, body.description || '', JSON.stringify(body.tags || []),
+     body.category || 'general', body.content || '', JSON.stringify(body.frontmatter || {}),
+     body.youtube_url || '', body.video_id || '', body.thumbnail_url || '',
+     body.seo_title || '', body.seo_description || '', body.status || 'draft']
+  );
+
+  const article = await dbGet(
+    'SELECT a.*, s.name as site_name FROM articles a LEFT JOIN sites s ON a.site_id = s.id WHERE a.id = ?',
+    [id]
+  );
+  return NextResponse.json(article, { status: 201 });
 }

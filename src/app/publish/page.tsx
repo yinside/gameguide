@@ -109,7 +109,7 @@ export default function PublishPage() {
           <SelectContent className="bg-gaming-card border-gaming-border">
             <SelectItem value="all">All Sites</SelectItem>
             {sites.map((s) => (
-              <SelectItem key={s.id} value={s.id}>
+              <SelectItem key={s.id} value={s.id} label={s.name}>
                 {s.name}
               </SelectItem>
             ))}

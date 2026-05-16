@@ -1,29 +1,26 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
+import { createClient } from '@libsql/client';
 
-const DB_PATH = path.join(process.cwd(), 'data', 'cms.db');
+type TursoClient = ReturnType<typeof createClient>;
 
-let db: Database.Database;
+let client: TursoClient;
+let initPromise: Promise<void> | null = null;
 
-export function getDb(): Database.Database {
-  if (!db) {
-    const dir = path.dirname(DB_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+function getClient(): TursoClient {
+  if (!client) {
+    const url = process.env.TURSO_DATABASE_URL;
+    const authToken = process.env.TURSO_AUTH_TOKEN;
+    if (!url || !authToken) {
+      throw new Error('TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are required');
     }
-    
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    initSchema(db);
+    client = createClient({ url, authToken });
   }
-  return db;
+  return client;
 }
 
-function initSchema(db: Database.Database) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS sites (
+async function initDb(): Promise<void> {
+  const c = getClient();
+  await c.batch([
+    `CREATE TABLE IF NOT EXISTS sites (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       domain TEXT NOT NULL,
@@ -35,9 +32,8 @@ function initSchema(db: Database.Database) {
       github_token TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS articles (
+    )`,
+    `CREATE TABLE IF NOT EXISTS articles (
       id TEXT PRIMARY KEY,
       site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
@@ -55,9 +51,8 @@ function initSchema(db: Database.Database) {
       status TEXT NOT NULL DEFAULT 'draft',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS youtube_videos (
+    )`,
+    `CREATE TABLE IF NOT EXISTS youtube_videos (
       id TEXT PRIMARY KEY,
       url TEXT NOT NULL,
       video_id TEXT NOT NULL UNIQUE,
@@ -67,9 +62,8 @@ function initSchema(db: Database.Database) {
       duration TEXT DEFAULT '',
       channel_name TEXT DEFAULT '',
       imported_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS publish_logs (
+    )`,
+    `CREATE TABLE IF NOT EXISTS publish_logs (
       id TEXT PRIMARY KEY,
       article_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
       site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
@@ -77,6 +71,33 @@ function initSchema(db: Database.Database) {
       commit_sha TEXT DEFAULT '',
       message TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
+    )`,
+  ], 'write');
+}
+
+async function ensureInit(): Promise<void> {
+  if (!initPromise) {
+    initPromise = initDb();
+  }
+  await initPromise;
+}
+
+export async function dbGet<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T | undefined> {
+  await ensureInit();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await getClient().execute({ sql, args: params as any });
+  return result.rows[0] as T | undefined;
+}
+
+export async function dbAll<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
+  await ensureInit();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await getClient().execute({ sql, args: params as any });
+  return result.rows as unknown as T[];
+}
+
+export async function dbRun(sql: string, params: unknown[] = []): Promise<void> {
+  await ensureInit();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await getClient().execute({ sql, args: params as any });
 }
